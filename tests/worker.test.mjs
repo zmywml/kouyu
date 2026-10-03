@@ -3,9 +3,12 @@ import assert from 'node:assert/strict';
 import worker from '../worker/index.mjs';
 
 test('worker health endpoint reports the deployed runtime and D1', async () => {
-  const response = await worker.fetch(new Request('https://example.com/api/health'), {});
+  let checked = false;
+  const env = {DB: {prepare: sql => ({first: async () => {checked = sql === 'SELECT 1 AS ok'; return {ok: 1};}})}};
+  const response = await worker.fetch(new Request('https://example.com/api/health'), env);
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), {ok: true, runtime: 'cloudflare-worker', database: 'd1'});
+  assert.equal(checked, true);
 });
 
 test('worker rejects cross-origin API mutations before reading secrets', async () => {

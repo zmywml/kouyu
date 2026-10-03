@@ -178,7 +178,10 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     try {
-      if (url.pathname === '/api/health' && request.method === 'GET') return json({ok: true, runtime: 'cloudflare-worker', database: 'd1'});
+      if (url.pathname === '/api/health' && request.method === 'GET') {
+        await env.DB.prepare('SELECT 1 AS ok').first();
+        return json({ok: true, runtime: 'cloudflare-worker', database: 'd1'});
+      }
       if (url.pathname === '/api/bootstrap' && request.method === 'GET') return bootstrap(request, env);
       if (!requireSameOrigin(request) && request.method !== 'GET') return json({error: 'invalid_origin'}, 403);
       if (url.pathname === '/api/auth/teacher' && request.method === 'POST') return teacherLogin(request, env);
