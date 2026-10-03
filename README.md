@@ -12,7 +12,7 @@
 - Cloudflare Secrets：保存 `SESSION_SECRET`、`TEACHER_TOKEN` 和可选的 `SILICONFLOW_API_KEY`。
 - IndexedDB：保存真实录音 Blob。D1 只存元数据；若需跨设备播放，应继续接入 R2。
 
-账号密码使用带独立随机盐的 PBKDF2-SHA256 哈希保存（120,000 次迭代），Worker 登录成功后签发 8 小时 HttpOnly、Secure、SameSite 会话 Cookie。仓库不保存初始明文密码。
+账号密码使用独立随机盐和仅服务端持有的 `SESSION_SECRET`（pepper）生成 HMAC-SHA256 哈希，避免 Pages/Workers 紧 CPU 配额导致登录执行异常。Worker 登录成功后签发 8 小时 HttpOnly、Secure、SameSite 会话 Cookie。仓库不保存初始明文密码；更换 `SESSION_SECRET` 时需要同步重置账号密码哈希。
 
 ## 本地开发
 

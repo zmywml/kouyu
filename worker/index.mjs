@@ -33,9 +33,9 @@ function hex(bytes) {
   return [...new Uint8Array(bytes)].map(value => value.toString(16).padStart(2, '0')).join('');
 }
 
-async function passwordHash(password, salt) {
-  const material = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']);
-  return hex(await crypto.subtle.deriveBits({name: 'PBKDF2', hash: 'SHA-256', salt: new TextEncoder().encode(salt), iterations: 120000}, material, 256));
+async function passwordHash(password, salt, secret) {
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), {name: 'HMAC', hash: 'SHA-256'}, false, ['sign']);
+  return hex(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${salt}:${password}`)));
 }
 
 async function signedCookie(name, request, env) {
@@ -185,7 +185,7 @@ async function accountLogin(request, env) {
   if (!username.trim() || !password || username.length > 80 || password.length > 200) return json({error: 'invalid_credentials'}, 401);
   const account = await env.DB.prepare(`SELECT id,username,password_salt,password_hash,role,display_name
     FROM accounts WHERE username=? COLLATE NOCASE AND status='active'`).bind(username.trim()).first();
-  const candidate = await passwordHash(password, account?.password_salt || 'invalid-account-salt');
+  const candidate = await passwordHash(password, account?.password_salt || 'invalid-account-salt', env.SESSION_SECRET);
   if (!account || !await safeEqual(candidate, account.password_hash)) return json({error: 'invalid_credentials'}, 401);
   const expires = Date.now() + 8 * 60 * 60 * 1000;
   const value = `${account.id}:${account.role}:${expires}`;
@@ -228,7 +228,11 @@ export default {
       if (url.pathname === '/api/events' && request.method === 'POST') return handleEvent(request, env);
       if (url.pathname === '/api/ai/feedback' && request.method === 'POST') return aiFeedback(request, env);
       if (url.pathname.startsWith('/api/')) return json({error: 'not_found'}, 404);
-      return env.ASSETS.fetch(request);
+      const asset = await env.ASSETS.fetch(request);
+      if (asset.status === 404 && request.method === 'GET' && (request.headers.get('accept') || '').includes('text/html')) {
+        return env.ASSETS.fetch(new Request(new URL('/index.html', request.url), request));
+      }
+      return asset;
     } catch (error) {
       console.error(error);
       return json({error: 'internal_error'}, 500);

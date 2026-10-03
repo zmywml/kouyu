@@ -26,3 +26,15 @@ test('non-API requests are served through the Workers Assets binding', async () 
   const response = await worker.fetch(new Request('https://example.com/learning/path'), env);
   assert.equal(await response.text(), 'asset:/learning/path');
 });
+
+test('unknown browser routes fall back to the SPA shell', async () => {
+  const paths = [];
+  const env = {ASSETS: {fetch: request => {
+    const path = new URL(request.url).pathname;
+    paths.push(path);
+    return Promise.resolve(path === '/index.html' ? new Response('app-shell') : new Response('missing', {status: 404}));
+  }}};
+  const response = await worker.fetch(new Request('https://example.com/learning/path', {headers: {accept: 'text/html'}}), env);
+  assert.equal(await response.text(), 'app-shell');
+  assert.deepEqual(paths, ['/learning/path', '/index.html']);
+});

@@ -1,0 +1,9 @@
+name = "kouyu"
+compatibility_date = "2026-10-03"
+pages_build_output_dir = "../dist"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "kouyu-production"
+database_id = "42f7f5ca-cdf4-46c9-99b6-ac91a10dec65"
+migrations_dir = "../migrations"
