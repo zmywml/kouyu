@@ -4,16 +4,23 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "node scripts/dev.mjs",
+    "dev": "npm run build && wrangler dev",
+    "dev:static": "node scripts/dev.mjs",
     "build": "node scripts/build.mjs",
-    "preview": "node scripts/dev.mjs",
+    "preview": "npm run dev",
+    "deploy": "npm run build && wrangler deploy",
+    "db:migrate:local": "wrangler d1 migrations apply kouyu-production --local",
+    "db:migrate:remote": "wrangler d1 migrations apply kouyu-production --remote",
     "check": "npm run build && node --test tests/*.test.mjs",
     "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {
-    "react": "18.3.1",
-    "react-dom": "18.3.1",
+    "esbuild": "0.25.9",
     "lucide-react": "0.451.0",
-    "esbuild": "0.25.9"
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "wrangler": "^4.147.0"
   }
 }

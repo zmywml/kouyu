@@ -1,34 +1,50 @@
 # 口语
 
-面向高校英语课堂的口语训练设计体验版，提供独立的学生学习空间和教师工作台。完整设计见 [DESIGN.md](DESIGN.md)。
+面向高校英语课堂的口语训练应用。前端和 API 运行在 Cloudflare Worker，静态资源由 Workers Assets 提供，班级、学生、学习进度、任务、草稿、作业提交和批改结果保存在 D1。
 
-可体验：基础诊断推荐、三类场景、合成语音精听、真实本地录音与回放、生词收藏、文字角色扮演、复盘提交、教师发布任务和时间点批阅、线下活动计时。
+完整产品设计见 [DESIGN.md](DESIGN.md)。
 
-统计由实际操作产生，不提供虚构的能力分数。角色切换用于原型体验，不是身份验证。
+## 架构
 
-## 本地运行
+- Cloudflare Worker：页面路由、业务 API、教师身份验证及 SiliconFlow 代理。
+- Workers Assets：托管 `dist` 中的 React 静态资源。
+- D1：保存班级、学生、进度、任务、录音草稿元数据、作业和批改结果。
+- Cloudflare Secrets：保存 `SESSION_SECRET`、`TEACHER_TOKEN` 和可选的 `SILICONFLOW_API_KEY`。
+- IndexedDB：保存真实录音 Blob。D1 只存元数据；若需跨设备播放，应继续接入 R2。
+
+## 本地开发
+
+复制 `.dev.vars.example` 为 `.dev.vars`，填写本地开发密钥，然后运行：
 
 ```bash
 npm install
+npm run db:migrate:local
 npm run dev
 ```
 
-## 构建
+Wrangler 会同时启动 Worker、D1 和静态资源服务。
+
+## 测试与构建
 
 ```bash
-npm run build
+npm run check
+npm audit --audit-level=high
 ```
 
-`npm run check` 执行生产构建与学习闭环测试。`npm run dev` 构建并在 `http://127.0.0.1:5173` 预览；修改源码后重新构建、刷新页面。
+## Cloudflare 部署
 
-## Cloudflare Pages
-
-项目包含 `wrangler.toml` 和 SPA 重定向配置，可通过以下命令部署：
+首次部署前创建 D1、写入 `wrangler.toml` 的数据库 ID，并配置 Secrets：
 
 ```bash
-npx wrangler pages deploy dist --project-name kouyu
+npx wrangler d1 migrations apply kouyu-production --remote
+npx wrangler secret put SESSION_SECRET
+npx wrangler secret put TEACHER_TOKEN
+npx wrangler secret put SILICONFLOW_API_KEY
+npm run deploy
 ```
 
-进度、任务和点评保存在 localStorage，录音保存在 IndexedDB；不上传服务器，不跨设备同步。浏览器清除网站数据后记录会丢失。录音要求 HTTPS 或 localhost，需用户授权麦克风。语音示范由浏览器 speechSynthesis 提供，部分设备需安装英语语音。
+`SILICONFLOW_API_KEY` 为可选项；未配置时 AI 接口返回明确的未配置状态，不会伪造反馈。生产环境不得将任何 Secret 写入仓库或前端代码。
 
-尚未接入：真实账号和班级权限、AI 语音识别/评分/对话、资源上传与在线音视频课堂。文字对话使用显式规则，只演示沟通目标流程。Cloudflare 发布状态需以实际部署结果为准。
+## 数据边界
+
+学习进度和课堂业务数据可通过 D1 同步。录音文件仍仅保存在当前浏览器的 IndexedDB 中，清除网站数据会删除本机音频；D1 中的录音元数据和作业记录仍会保留。当前没有语音识别或发音评分，文字对话使用显式规则，不展示模拟能力分数。

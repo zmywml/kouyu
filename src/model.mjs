@@ -19,6 +19,7 @@ export function lessonProgress(state,id){const p=state.progress[id]||{};return [
 export function recommendLesson(d){return d?.confidence==='comfortable'&&d?.answer==='window'?'opinion':d?.goal==='campus'?'campus':'airport';}
 export function respondToDialogue(lesson,step,input){if(step>=lesson.prompts.length)return {done:true,step,text:'Thank you for the conversation. See you next time!'};if(!new RegExp(lesson.intents[step],'i').test(input))return {step,done:false,text:`Let’s try this part again. ${lesson.prompts[step]}`};const next=step+1;return {step:next,done:next===lesson.prompts.length,text:lesson.prompts[next]||'Great, we’ve covered everything. Thank you for the conversation!'};}
 export function reducer(state,action){switch(action.type){
+  case 'hydrate':return loadState(JSON.stringify(action.state));
   case 'select':return {...state,activeLesson:action.id};
   case 'diagnose':return {...state,diagnostic:action.value,activeLesson:recommendLesson(action.value)};
   case 'progress':return {...state,progress:{...state.progress,[action.lesson]:{...state.progress[action.lesson],[action.step]:true}}};

@@ -1,3 +1,20 @@
-name = "kouyu"
-compatibility_date = "2026-10-02"
-pages_build_output_dir = "dist"
+name = "kouyu-worker"
+compatibility_date = "2026-10-03"
+main = "worker/index.mjs"
+workers_dev = true
+preview_urls = false
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = [ "/api/*" ]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "kouyu-production"
+database_id = "42f7f5ca-cdf4-46c9-99b6-ac91a10dec65"
+migrations_dir = "migrations"
+
+[secrets]
+required = [ "SESSION_SECRET", "TEACHER_TOKEN" ]
