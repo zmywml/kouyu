@@ -2,7 +2,7 @@
 
 面向高校英语课堂的口语训练应用。前端和 API 运行在 Cloudflare Worker，静态资源由 Workers Assets 提供，班级、学生、学习进度、任务、草稿、作业提交和批改结果保存在 D1。
 
-完整产品设计见 [DESIGN.md](DESIGN.md)。
+完整项目介绍和操作手册见 [PROJECT_GUIDE.md](PROJECT_GUIDE.md)，产品设计见 [DESIGN.md](DESIGN.md)。
 
 ## 架构
 
