@@ -8,9 +8,11 @@
 
 - Cloudflare Worker：页面路由、业务 API、教师身份验证及 SiliconFlow 代理。
 - Workers Assets：托管 `dist` 中的 React 静态资源。
-- D1：保存班级、学生、进度、任务、录音草稿元数据、作业和批改结果。
+- D1：保存账号、教师、班级、学生、进度、任务、录音草稿元数据、作业和批改结果。
 - Cloudflare Secrets：保存 `SESSION_SECRET`、`TEACHER_TOKEN` 和可选的 `SILICONFLOW_API_KEY`。
 - IndexedDB：保存真实录音 Blob。D1 只存元数据；若需跨设备播放，应继续接入 R2。
+
+账号密码使用带独立随机盐的 PBKDF2-SHA256 哈希保存（120,000 次迭代），Worker 登录成功后签发 8 小时 HttpOnly、Secure、SameSite 会话 Cookie。仓库不保存初始明文密码。
 
 ## 本地开发
 

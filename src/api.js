@@ -15,5 +15,5 @@ async function request(path, options = {}) {
 
 export const loadCloudState = (view = 'student') => request(`/api/bootstrap?view=${encodeURIComponent(view)}`);
 export const syncEvent = action => request('/api/events', {method: 'POST', body: JSON.stringify(action)});
-export const loginTeacher = token => request('/api/auth/teacher', {method: 'POST', body: JSON.stringify({token})});
-export const logoutTeacher = () => request('/api/auth/session', {method: 'DELETE'});
+export const loginAccount = (username, password) => request('/api/auth/login', {method: 'POST', body: JSON.stringify({username, password})});
+export const logoutAccount = () => request('/api/auth/session', {method: 'DELETE'});

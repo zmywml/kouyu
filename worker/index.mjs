@@ -29,6 +29,15 @@ async function safeEqual(a, b) {
   return result === 0;
 }
 
+function hex(bytes) {
+  return [...new Uint8Array(bytes)].map(value => value.toString(16).padStart(2, '0')).join('');
+}
+
+async function passwordHash(password, salt) {
+  const material = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']);
+  return hex(await crypto.subtle.deriveBits({name: 'PBKDF2', hash: 'SHA-256', salt: new TextEncoder().encode(salt), iterations: 120000}, material, 256));
+}
+
 async function signedCookie(name, request, env) {
   const raw = cookies(request)[name];
   if (!raw) return null;
@@ -38,8 +47,19 @@ async function signedCookie(name, request, env) {
   return await safeEqual(signature, await sign(`${name}:${value}`, env.SESSION_SECRET)) ? value : null;
 }
 
+async function accountSession(request, env) {
+  const value = await signedCookie('kouyu_account', request, env);
+  if (!value) return null;
+  const [id, role, expires] = value.split(':');
+  if (!id || !['student', 'teacher'].includes(role) || Number(expires) <= Date.now()) return null;
+  const account = await env.DB.prepare(`SELECT id,username,role,display_name,class_id,student_id,teacher_id
+    FROM accounts WHERE id=? AND role=? AND status='active'`).bind(id, role).first();
+  return account || null;
+}
+
 async function studentSession(request, env) {
-  let id = await signedCookie('kouyu_student', request, env), fresh = false;
+  const account = await accountSession(request, env);
+  let id = account?.role === 'student' ? account.student_id : await signedCookie('kouyu_student', request, env), fresh = false;
   if (!id) { id = crypto.randomUUID(); fresh = true; }
   const now = Date.now();
   await env.DB.prepare(`INSERT INTO students (id,class_id,display_name,created_at,last_seen_at)
@@ -50,6 +70,8 @@ async function studentSession(request, env) {
 }
 
 async function isTeacher(request, env) {
+  const account = await accountSession(request, env);
+  if (account?.role === 'teacher') return true;
   const expires = await signedCookie('kouyu_teacher', request, env);
   return Boolean(expires && Number(expires) > Date.now());
 }
@@ -61,6 +83,7 @@ function requireSameOrigin(request) {
 
 async function bootstrap(request, env) {
   const student = await studentSession(request, env);
+  const account = await accountSession(request, env);
   const teacher = await isTeacher(request, env);
   const teacherView = new URL(request.url).searchParams.get('view') === 'teacher' && teacher;
   const [profile, progress, tasks, drafts, submissions, grades] = await Promise.all([
@@ -97,7 +120,7 @@ async function bootstrap(request, env) {
     reviews,
     tasks: tasks.results.map(row => ({id: row.id, lesson: row.lesson_id, title: row.title, instruction: row.instruction, due: row.due_at || '', group: '英语口语练习班', published: true, sample: row.created_by === 'system'})),
   };
-  return json({state, session: {teacher, view: teacherView ? 'teacher' : 'student', storage: 'd1'}}, 200, student.cookie ? {'set-cookie': student.cookie} : {});
+  return json({state, session: {teacher, account: account ? {username: account.username, role: account.role, displayName: account.display_name} : null, view: teacherView ? 'teacher' : 'student', storage: 'd1'}}, 200, student.cookie ? {'set-cookie': student.cookie} : {});
 }
 
 async function handleEvent(request, env) {
@@ -157,6 +180,21 @@ async function teacherLogin(request, env) {
   return json({ok: true, expires}, 200, {'set-cookie': `kouyu_teacher=${encodeURIComponent(value)}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=28800`});
 }
 
+async function accountLogin(request, env) {
+  const {username = '', password = ''} = await request.json();
+  if (!username.trim() || !password || username.length > 80 || password.length > 200) return json({error: 'invalid_credentials'}, 401);
+  const account = await env.DB.prepare(`SELECT id,username,password_salt,password_hash,role,display_name
+    FROM accounts WHERE username=? COLLATE NOCASE AND status='active'`).bind(username.trim()).first();
+  const candidate = await passwordHash(password, account?.password_salt || 'invalid-account-salt');
+  if (!account || !await safeEqual(candidate, account.password_hash)) return json({error: 'invalid_credentials'}, 401);
+  const expires = Date.now() + 8 * 60 * 60 * 1000;
+  const value = `${account.id}:${account.role}:${expires}`;
+  const signed = `${value}.${await sign(`kouyu_account:${value}`, env.SESSION_SECRET)}`;
+  return json({ok: true, account: {username: account.username, role: account.role, displayName: account.display_name}, expires}, 200, {
+    'set-cookie': `kouyu_account=${encodeURIComponent(signed)}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=28800`,
+  });
+}
+
 async function aiFeedback(request, env) {
   if (!env.SILICONFLOW_API_KEY) return json({error: 'siliconflow_not_configured'}, 503);
   const {text = '', context = ''} = await request.json();
@@ -184,8 +222,9 @@ export default {
       }
       if (url.pathname === '/api/bootstrap' && request.method === 'GET') return bootstrap(request, env);
       if (!requireSameOrigin(request) && request.method !== 'GET') return json({error: 'invalid_origin'}, 403);
+      if (url.pathname === '/api/auth/login' && request.method === 'POST') return accountLogin(request, env);
       if (url.pathname === '/api/auth/teacher' && request.method === 'POST') return teacherLogin(request, env);
-      if (url.pathname === '/api/auth/session' && request.method === 'DELETE') return json({ok: true}, 200, {'set-cookie': 'kouyu_teacher=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0'});
+      if (url.pathname === '/api/auth/session' && request.method === 'DELETE') return json({ok: true}, 200, {'set-cookie': 'kouyu_account=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0'});
       if (url.pathname === '/api/events' && request.method === 'POST') return handleEvent(request, env);
       if (url.pathname === '/api/ai/feedback' && request.method === 'POST') return aiFeedback(request, env);
       if (url.pathname.startsWith('/api/')) return json({error: 'not_found'}, 404);
