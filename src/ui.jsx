@@ -1,0 +1,16 @@
+import React,{useEffect,useRef,useState} from 'react';
+import {BookOpen,Plane,Coffee,MessageCircle,Download,Clock3,ArrowUpRight,X} from 'lucide-react';
+import {lessons,lessonProgress} from './model.mjs';
+import {getAudio} from './media.js';
+export const clock=n=>`${Math.floor(n/60).toString().padStart(2,'0')}:${(n%60).toString().padStart(2,'0')}`;
+export const date=t=>new Intl.DateTimeFormat('zh-CN',{month:'short',day:'numeric'}).format(new Date(t));
+export function Button({children,onClick,kind='',className='',...rest}){return <button className={`btn ${kind} ${className}`} onClick={onClick} {...rest}>{children}</button>;}
+export function Tag({children,color=''}){return <span className={`tag ${color}`}>{children}</span>;}
+export function Empty({icon:Icon=BookOpen,title,children,action}){return <div className="empty"><span><Icon size={26}/></span><h3>{title}</h3><p>{children}</p>{action}</div>;}
+export function SectionTitle({eyebrow,title,action}){return <div className="section-title"><div>{eyebrow&&<div className="eyebrow">{eyebrow}</div>}<h2>{title}</h2></div>{action}</div>;}
+export function PageHeading({eyebrow,title,description,action}){return <div className="page-heading"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p>{description}</p></div>{action}</div>;}
+const icons={plane:Plane,coffee:Coffee,message:MessageCircle};
+export function LessonIcon({lesson,large=false}){const Icon=icons[lesson.icon];return <span className={`lesson-icon ${lesson.color} ${large?'large':''}`}><Icon/></span>;}
+export function LessonCard({lesson,state,onClick}){return <button className="lesson-card" onClick={onClick}><div className={`lesson-cover ${lesson.color}`}><span>{lesson.english}</span><LessonIcon lesson={lesson} large/><small>{lesson.category}</small><span className="cover-number">0{lessons.indexOf(lesson)+1}</span></div><div className="lesson-card-body"><div><Tag>{lesson.level}</Tag><span><Clock3 size={12}/>{lesson.minutes} 分钟</span></div><h3>{lesson.title}</h3><p>{lesson.goal}</p><div className="lesson-card-foot"><span>{lessonProgress(state,lesson.id)}/4 环节</span><ArrowUpRight size={18}/></div></div></button>;}
+export function AudioPlayback({id}){const [url,setUrl]=useState(''),[error,setError]=useState('');useEffect(()=>{let active=true,localUrl;setUrl('');setError('');getAudio(id).then(blob=>{if(!active)return;if(!blob){setError('此设备上找不到录音文件。');return;}localUrl=URL.createObjectURL(blob);setUrl(localUrl);}).catch(()=>setError('录音读取失败。'));return()=>{active=false;if(localUrl)URL.revokeObjectURL(localUrl);};},[id]);return error?<p className="error">{error}</p>:url?<div className="audio-playback"><audio controls src={url} aria-label="录音回放"/><a href={url} download={`kouyu-${id}.webm`}><Download size={15}/>下载</a></div>:<p className="muted">正在读取录音…</p>;}
+export function Modal({title,children,onClose}){const dialog=useRef();useEffect(()=>{const d=dialog.current;d.showModal();return()=>d.close();},[]);return <dialog ref={dialog} className="modal" onCancel={onClose} onClick={e=>{if(e.target===e.currentTarget)onClose();}}><div className="modal-title"><h2>{title}</h2><button className="icon-btn" aria-label="关闭弹窗" onClick={onClose}><X size={20}/></button></div>{children}</dialog>;}
