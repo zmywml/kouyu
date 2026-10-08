@@ -4,11 +4,30 @@ import worker from '../worker/index.mjs';
 
 test('worker health endpoint reports the deployed runtime and D1', async () => {
   let checked = false;
-  const env = {DB: {prepare: sql => ({first: async () => {checked = sql === 'SELECT 1 AS ok'; return {ok: 1};}})}};
+  const env = {DB: {prepare: sql => ({first: async () => {checked = sql === 'SELECT 1 AS ok'; return {ok: 1};}})}, AUDIO: {}};
   const response = await worker.fetch(new Request('https://example.com/api/health'), env);
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), {ok: true, runtime: 'cloudflare-worker', database: 'd1'});
+  assert.deepEqual(await response.json(), {ok: true, runtime: 'cloudflare-worker', database: 'd1', audio: 'kv'});
   assert.equal(checked, true);
+});
+
+test('private KV audio is not exposed without a valid student or teacher session', async () => {
+  let touchedKv = false;
+  const env = {AUDIO: {getWithMetadata: async () => {touchedKv = true;}}};
+  const response = await worker.fetch(new Request('https://example.com/api/audio/2df77476-10d2-4f18-b8e5-e815c689f0e5'), env);
+  assert.equal(response.status, 404);
+  assert.deepEqual(await response.json(), {error: 'audio_not_found'});
+  assert.equal(touchedKv, false);
+});
+
+test('KV audio upload requires a signed-in student account', async () => {
+  const response = await worker.fetch(new Request('https://example.com/api/audio/2df77476-10d2-4f18-b8e5-e815c689f0e5?lesson=airport&duration=1&text=test', {
+    method: 'POST',
+    headers: {'content-type': 'audio/webm'},
+    body: new Uint8Array([1, 2, 3]),
+  }), {});
+  assert.equal(response.status, 401);
+  assert.deepEqual(await response.json(), {error: 'student_login_required'});
 });
 
 test('worker rejects cross-origin API mutations before reading secrets', async () => {

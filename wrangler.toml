@@ -16,5 +16,9 @@ database_name = "kouyu-production"
 database_id = "42f7f5ca-cdf4-46c9-99b6-ac91a10dec65"
 migrations_dir = "migrations"
 
+[[kv_namespaces]]
+binding = "AUDIO"
+id = "6232bcb0af7945f0bca20ca6cdb711ef"
+
 [secrets]
 required = [ "SESSION_SECRET", "TEACHER_TOKEN" ]

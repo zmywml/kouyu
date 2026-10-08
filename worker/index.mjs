@@ -1,6 +1,7 @@
 const CLASS_ID = 'english-speaking-lab';
 const allowedSteps = new Set(['listening', 'speaking', 'dialogue', 'review']);
 const allowedLessons = new Set(['airport', 'campus', 'opinion']);
+const MAX_AUDIO_BYTES = 12 * 1024 * 1024;
 
 const json = (value, status = 200, headers = {}) => new Response(JSON.stringify(value), {
   status,
@@ -91,9 +92,9 @@ async function bootstrap(request, env) {
     env.DB.prepare('SELECT lesson_id,step FROM learning_progress WHERE student_id=?').bind(student.id).all(),
     env.DB.prepare("SELECT id,lesson_id,title,instruction,due_at,created_by FROM tasks WHERE class_id=? AND status='published' ORDER BY created_at DESC").bind(CLASS_ID).all(),
     teacherView
-      ? env.DB.prepare(`SELECT d.id,d.lesson_id,d.prompt_text,d.duration_seconds,d.reflection,d.created_at,s.display_name AS student_name
+      ? env.DB.prepare(`SELECT d.id,d.lesson_id,d.prompt_text,d.duration_seconds,d.reflection,d.created_at,d.audio_key,s.display_name AS student_name
           FROM drafts d JOIN students s ON s.id=d.student_id WHERE s.class_id=? ORDER BY d.created_at DESC`).bind(CLASS_ID).all()
-      : env.DB.prepare('SELECT id,lesson_id,prompt_text,duration_seconds,reflection,created_at FROM drafts WHERE student_id=? ORDER BY created_at DESC').bind(student.id).all(),
+      : env.DB.prepare('SELECT id,lesson_id,prompt_text,duration_seconds,reflection,created_at,audio_key FROM drafts WHERE student_id=? ORDER BY created_at DESC').bind(student.id).all(),
     teacherView
       ? env.DB.prepare(`SELECT h.id,h.task_id,h.draft_id,h.submitted_at FROM homework_submissions h
           JOIN students s ON s.id=h.student_id WHERE s.class_id=?`).bind(CLASS_ID).all()
@@ -116,7 +117,7 @@ async function bootstrap(request, env) {
     activeLesson: allowedLessons.has(profile?.active_lesson) ? profile.active_lesson : 'airport',
     progress: progressMap,
     words: JSON.parse(profile?.words_json || '[]'),
-    records: drafts.results.map(row => ({id: row.id, lesson: row.lesson_id, text: row.prompt_text, duration: row.duration_seconds, created: row.created_at, student: row.student_name, submitted: Boolean(submissionsByDraft[row.id]), task: submissionsByDraft[row.id]?.task_id})),
+    records: drafts.results.map(row => ({id: row.id, lesson: row.lesson_id, text: row.prompt_text, duration: row.duration_seconds, created: row.created_at, student: row.student_name, submitted: Boolean(submissionsByDraft[row.id]), task: submissionsByDraft[row.id]?.task_id, cloudAudio: Boolean(row.audio_key)})),
     reviews,
     tasks: tasks.results.map(row => ({id: row.id, lesson: row.lesson_id, title: row.title, instruction: row.instruction, due: row.due_at || '', group: '英语口语练习班', published: true, sample: row.created_by === 'system'})),
   };
@@ -195,6 +196,84 @@ async function accountLogin(request, env) {
   });
 }
 
+function audioId(url) {
+  const match = new URL(url).pathname.match(/^\/api\/audio\/([0-9a-f-]{36})$/i);
+  return match ? match[1].toLowerCase() : null;
+}
+
+async function uploadAudio(request, env, id) {
+  const account = await accountSession(request, env);
+  if (account?.role !== 'student') return json({error: 'student_login_required'}, 401);
+  const student = await studentSession(request, env);
+  const url = new URL(request.url);
+  const lesson = url.searchParams.get('lesson') || '';
+  const promptText = (url.searchParams.get('text') || '').slice(0, 500);
+  const duration = Math.max(1, Math.min(120, Number(url.searchParams.get('duration')) || 0));
+  const contentType = (request.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+  const declaredSize = Number(request.headers.get('content-length') || 0);
+  if (!allowedLessons.has(lesson) || !promptText || !contentType.startsWith('audio/')) return json({error: 'invalid_audio_metadata'}, 400);
+  if (declaredSize > MAX_AUDIO_BYTES) return json({error: 'audio_too_large'}, 413);
+  const existing = await env.DB.prepare('SELECT student_id FROM drafts WHERE id=?').bind(id).first();
+  if (existing && existing.student_id !== student.id) return json({error: 'audio_conflict'}, 409);
+  const bytes = await request.arrayBuffer();
+  if (!bytes.byteLength || bytes.byteLength > MAX_AUDIO_BYTES) return json({error: 'audio_too_large'}, 413);
+  const key = `recordings/${student.id}/${id}`;
+  const now = Date.now();
+  await env.AUDIO.put(key, bytes, {metadata: {
+    studentId: student.id,
+    recordingId: id,
+    contentType,
+    size: bytes.byteLength,
+    uploadedAt: now,
+  }});
+  try {
+    await env.DB.prepare(`INSERT INTO drafts
+      (id,student_id,lesson_id,prompt_text,duration_seconds,created_at,updated_at,audio_key,audio_content_type,audio_size,audio_uploaded_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(id) DO UPDATE SET audio_key=excluded.audio_key,audio_content_type=excluded.audio_content_type,
+        audio_size=excluded.audio_size,audio_uploaded_at=excluded.audio_uploaded_at,updated_at=excluded.updated_at
+      WHERE drafts.student_id=excluded.student_id`).bind(
+        id, student.id, lesson, promptText, duration, now, now, key, contentType, bytes.byteLength, now,
+      ).run();
+  } catch (error) {
+    await env.AUDIO.delete(key);
+    throw error;
+  }
+  return json({ok: true, id, size: bytes.byteLength}, 201, student.cookie ? {'set-cookie': student.cookie} : {});
+}
+
+async function audioAccess(request, env, id) {
+  const account = await accountSession(request, env);
+  const anonymousStudentId = account ? null : await signedCookie('kouyu_student', request, env);
+  let draft;
+  if (account?.role === 'student') {
+    draft = await env.DB.prepare('SELECT audio_key,audio_content_type,audio_size FROM drafts WHERE id=? AND student_id=?').bind(id, account.student_id).first();
+  } else if (account?.role === 'teacher') {
+    draft = await env.DB.prepare(`SELECT d.audio_key,d.audio_content_type,d.audio_size FROM drafts d
+      JOIN homework_submissions h ON h.draft_id=d.id JOIN students s ON s.id=d.student_id
+      WHERE d.id=? AND s.class_id=?`).bind(id, account.class_id).first();
+  } else if (anonymousStudentId) {
+    draft = await env.DB.prepare('SELECT audio_key,audio_content_type,audio_size FROM drafts WHERE id=? AND student_id=?').bind(id, anonymousStudentId).first();
+  }
+  if (!draft?.audio_key) return null;
+  return draft;
+}
+
+async function serveAudio(request, env, id) {
+  const draft = await audioAccess(request, env, id);
+  if (!draft) return json({error: 'audio_not_found'}, 404);
+  const headers = new Headers({
+    'cache-control': 'private, no-store',
+    'content-type': draft.audio_content_type || 'audio/webm',
+    'content-length': String(draft.audio_size || 0),
+    'x-content-type-options': 'nosniff',
+  });
+  if (request.method === 'HEAD') return new Response(null, {status: 200, headers});
+  const object = await env.AUDIO.getWithMetadata(draft.audio_key, {type: 'stream'});
+  if (!object.value) return json({error: 'audio_not_found'}, 404);
+  return new Response(object.value, {status: 200, headers});
+}
+
 async function aiFeedback(request, env) {
   if (!env.SILICONFLOW_API_KEY) return json({error: 'siliconflow_not_configured'}, 503);
   const {text = '', context = ''} = await request.json();
@@ -218,13 +297,16 @@ export default {
     try {
       if (url.pathname === '/api/health' && request.method === 'GET') {
         await env.DB.prepare('SELECT 1 AS ok').first();
-        return json({ok: true, runtime: 'cloudflare-worker', database: 'd1'});
+        return json({ok: true, runtime: 'cloudflare-worker', database: 'd1', audio: env.AUDIO ? 'kv' : 'unbound'});
       }
       if (url.pathname === '/api/bootstrap' && request.method === 'GET') return bootstrap(request, env);
       if (!requireSameOrigin(request) && request.method !== 'GET') return json({error: 'invalid_origin'}, 403);
       if (url.pathname === '/api/auth/login' && request.method === 'POST') return accountLogin(request, env);
       if (url.pathname === '/api/auth/teacher' && request.method === 'POST') return teacherLogin(request, env);
       if (url.pathname === '/api/auth/session' && request.method === 'DELETE') return json({ok: true}, 200, {'set-cookie': 'kouyu_account=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0'});
+      const recordingId = audioId(request.url);
+      if (recordingId && request.method === 'POST') return uploadAudio(request, env, recordingId);
+      if (recordingId && (request.method === 'GET' || request.method === 'HEAD')) return serveAudio(request, env, recordingId);
       if (url.pathname === '/api/events' && request.method === 'POST') return handleEvent(request, env);
       if (url.pathname === '/api/ai/feedback' && request.method === 'POST') return aiFeedback(request, env);
       if (url.pathname.startsWith('/api/')) return json({error: 'not_found'}, 404);
